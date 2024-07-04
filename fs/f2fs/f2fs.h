@@ -192,6 +192,12 @@ struct f2fs_mount_info {
 	int compress_mode;			/* compression mode */
 	unsigned char extensions[COMPRESS_EXT_NUM][F2FS_EXTENSION_LEN];	/* extensions */
 	unsigned char noextensions[COMPRESS_EXT_NUM][F2FS_EXTENSION_LEN]; /* extensions */
+	/*
+	 * track certain mount flags which must be checked after sb read,
+	 * so that defaults can be set if not explicitly requested at mount.
+	 */
+	bool user_set_discard;		/* flag */
+	bool user_set_flush_merge;	/* flag */
 };
 
 #define F2FS_FEATURE_ENCRYPT			0x00000001
@@ -1001,6 +1007,7 @@ static inline void set_new_dnode(struct dnode_of_data *dn, struct inode *inode,
  * Just in case, on-disk layout covers maximum 16 logs that consist of 8 for
  * data and 8 for node logs.
  */
+#define NR_CURSEG_UNSET_TYPE	(-1)
 #define	NR_CURSEG_DATA_TYPE	(3)
 #define NR_CURSEG_NODE_TYPE	(3)
 #define NR_CURSEG_INMEM_TYPE	(2)
@@ -1348,6 +1355,7 @@ enum {
 };
 
 enum {
+	FS_MODE_UNSET,			/* user has not requested mode */
 	FS_MODE_ADAPTIVE,		/* use both lfs/ssr allocation */
 	FS_MODE_LFS,			/* use lfs allocation only */
 	FS_MODE_FRAGMENT_SEG,		/* segment fragmentation mode */
@@ -1355,6 +1363,7 @@ enum {
 };
 
 enum {
+	ALLOC_MODE_UNSET,	/* user has not requested alloc mode */
 	ALLOC_MODE_DEFAULT,	/* stay default */
 	ALLOC_MODE_REUSE,	/* reuse segments as much as possible */
 };
@@ -1366,6 +1375,7 @@ enum fsync_mode {
 };
 
 enum {
+	COMPR_MODE_UNSET,	/* user has not set a compress mode */
 	COMPR_MODE_FS,		/*
 				 * automatically compress compression
 				 * enabled files
@@ -1378,6 +1388,7 @@ enum {
 };
 
 enum {
+	DISCARD_UNIT_UNSET,	/* user has not requested a discard unit */
 	DISCARD_UNIT_BLOCK,	/* basic discard unit is block */
 	DISCARD_UNIT_SEGMENT,	/* basic discard unit is segment */
 	DISCARD_UNIT_SECTION,	/* basic discard unit is section */
@@ -1540,6 +1551,7 @@ struct decompress_io_ctx {
 };
 
 #define NULL_CLUSTER			((unsigned int)(~0))
+#define UNSET_COMPRESS_LOG_SIZE		1
 #define MIN_COMPRESS_LOG_SIZE		2
 #define MAX_COMPRESS_LOG_SIZE		8
 #define MAX_COMPRESS_WINDOW_SIZE(log_size)	((PAGE_SIZE) << (log_size))

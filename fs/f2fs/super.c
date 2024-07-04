@@ -781,9 +781,11 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 			break;
 		case Opt_discard:
 			set_opt(sbi, DISCARD);
+			F2FS_OPTION(sbi).user_set_discard = true;
 			break;
 		case Opt_nodiscard:
 			clear_opt(sbi, DISCARD);
+			F2FS_OPTION(sbi).user_set_discard = true;
 			break;
 		case Opt_noheap:
 		case Opt_heap:
@@ -859,9 +861,11 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 			break;
 		case Opt_flush_merge:
 			set_opt(sbi, FLUSH_MERGE);
+			F2FS_OPTION(sbi).user_set_flush_merge = true;
 			break;
 		case Opt_noflush_merge:
 			clear_opt(sbi, FLUSH_MERGE);
+			F2FS_OPTION(sbi).user_set_flush_merge = true;
 			break;
 		case Opt_nobarrier:
 			set_opt(sbi, NOBARRIER);
@@ -1323,7 +1327,60 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 	return 0;
 }
 
-static int f2fs_default_check(struct f2fs_sb_info *sbi)
+/*
+ * Set up defaults which depend on superblock features, if they were
+ * not requested / set at mount time
+ */
+static void f2fs_sb_defaults(struct f2fs_sb_info *sbi, bool remount)
+{
+	if (!remount && !F2FS_OPTION(sbi).user_set_discard) {
+		if (f2fs_hw_support_discard(sbi) || f2fs_hw_should_discard(sbi))
+			set_opt(sbi, DISCARD);
+	}
+
+	if (!remount && F2FS_OPTION(sbi).discard_unit == DISCARD_UNIT_UNSET) {
+		if (f2fs_sb_has_blkzoned(sbi))
+			F2FS_OPTION(sbi).discard_unit = DISCARD_UNIT_SECTION;
+		else
+			F2FS_OPTION(sbi).discard_unit = DISCARD_UNIT_BLOCK;
+	}
+
+	if (F2FS_OPTION(sbi).active_logs == NR_CURSEG_UNSET_TYPE) {
+		if (f2fs_sb_has_readonly(sbi))
+			F2FS_OPTION(sbi).active_logs = NR_CURSEG_RO_TYPE;
+		else
+			F2FS_OPTION(sbi).active_logs = NR_CURSEG_PERSIST_TYPE;
+	}
+
+	if (F2FS_OPTION(sbi).alloc_mode == ALLOC_MODE_UNSET) {
+		if (le32_to_cpu(F2FS_RAW_SUPER(sbi)->segment_count_main) <=
+							SMALL_VOLUME_SEGMENTS)
+			F2FS_OPTION(sbi).alloc_mode = ALLOC_MODE_REUSE;
+		else
+			F2FS_OPTION(sbi).alloc_mode = ALLOC_MODE_DEFAULT;
+	}
+
+	if (f2fs_sb_has_compression(sbi)) {
+		if (F2FS_OPTION(sbi).compress_algorithm == COMPRESS_UNSET)
+			F2FS_OPTION(sbi).compress_algorithm = COMPRESS_LZ4;
+		if (F2FS_OPTION(sbi).compress_log_size == UNSET_COMPRESS_LOG_SIZE)
+			F2FS_OPTION(sbi).compress_log_size = MIN_COMPRESS_LOG_SIZE;
+		if (F2FS_OPTION(sbi).compress_mode == COMPR_MODE_UNSET)
+			F2FS_OPTION(sbi).compress_mode = COMPR_MODE_FS;
+	}
+
+	if (!F2FS_OPTION(sbi).user_set_flush_merge && !f2fs_is_readonly(sbi))
+		set_opt(sbi, FLUSH_MERGE);
+
+	if (F2FS_OPTION(sbi).fs_mode == FS_MODE_UNSET) {
+		if (f2fs_sb_has_blkzoned(sbi))
+			F2FS_OPTION(sbi).fs_mode = FS_MODE_LFS;
+		else
+			F2FS_OPTION(sbi).fs_mode = FS_MODE_ADAPTIVE;
+	}
+}
+
+static int f2fs_default_check(struct f2fs_sb_info *sbi, bool is_remount)
 {
 #ifdef CONFIG_QUOTA
 	if (f2fs_check_quota_options(sbi))
@@ -2135,36 +2192,13 @@ static void default_options(struct f2fs_sb_info *sbi, bool remount)
 	if (!remount) {
 		set_opt(sbi, READ_EXTENT_CACHE);
 		clear_opt(sbi, DISABLE_CHECKPOINT);
-
-		if (f2fs_hw_support_discard(sbi) || f2fs_hw_should_discard(sbi))
-			set_opt(sbi, DISCARD);
-
-		if (f2fs_sb_has_blkzoned(sbi))
-			F2FS_OPTION(sbi).discard_unit = DISCARD_UNIT_SECTION;
-		else
-			F2FS_OPTION(sbi).discard_unit = DISCARD_UNIT_BLOCK;
 	}
 
-	if (f2fs_sb_has_readonly(sbi))
-		F2FS_OPTION(sbi).active_logs = NR_CURSEG_RO_TYPE;
-	else
-		F2FS_OPTION(sbi).active_logs = NR_CURSEG_PERSIST_TYPE;
-
 	F2FS_OPTION(sbi).inline_xattr_size = DEFAULT_INLINE_XATTR_ADDRS;
-	if (le32_to_cpu(F2FS_RAW_SUPER(sbi)->segment_count_main) <=
-							SMALL_VOLUME_SEGMENTS)
-		F2FS_OPTION(sbi).alloc_mode = ALLOC_MODE_REUSE;
-	else
-		F2FS_OPTION(sbi).alloc_mode = ALLOC_MODE_DEFAULT;
 	F2FS_OPTION(sbi).fsync_mode = FSYNC_MODE_POSIX;
 	F2FS_OPTION(sbi).s_resuid = make_kuid(&init_user_ns, F2FS_DEF_RESUID);
 	F2FS_OPTION(sbi).s_resgid = make_kgid(&init_user_ns, F2FS_DEF_RESGID);
-	if (f2fs_sb_has_compression(sbi)) {
-		F2FS_OPTION(sbi).compress_algorithm = COMPRESS_LZ4;
-		F2FS_OPTION(sbi).compress_log_size = MIN_COMPRESS_LOG_SIZE;
-		F2FS_OPTION(sbi).compress_ext_cnt = 0;
-		F2FS_OPTION(sbi).compress_mode = COMPR_MODE_FS;
-	}
+
 	F2FS_OPTION(sbi).bggc_mode = BGGC_MODE_ON;
 	F2FS_OPTION(sbi).memory_mode = MEMORY_MODE_NORMAL;
 	F2FS_OPTION(sbi).errors = MOUNT_ERRORS_CONTINUE;
@@ -2175,12 +2209,6 @@ static void default_options(struct f2fs_sb_info *sbi, bool remount)
 	set_opt(sbi, MERGE_CHECKPOINT);
 	F2FS_OPTION(sbi).unusable_cap = 0;
 	sbi->sb->s_flags |= SB_LAZYTIME;
-	if (!f2fs_is_readonly(sbi))
-		set_opt(sbi, FLUSH_MERGE);
-	if (f2fs_sb_has_blkzoned(sbi))
-		F2FS_OPTION(sbi).fs_mode = FS_MODE_LFS;
-	else
-		F2FS_OPTION(sbi).fs_mode = FS_MODE_ADAPTIVE;
 
 #ifdef CONFIG_F2FS_FS_XATTR
 	set_opt(sbi, XATTR_USER);
@@ -2190,6 +2218,19 @@ static void default_options(struct f2fs_sb_info *sbi, bool remount)
 #endif
 
 	f2fs_build_fault_attr(sbi, 0, 0);
+
+	/*
+	 * Options for which defaults rely on superblock features,
+	 * defaults will be set later if not requested at mount time,
+	 * here we init to special "unset" values.
+	 */
+	F2FS_OPTION(sbi).discard_unit = DISCARD_UNIT_UNSET;
+	F2FS_OPTION(sbi).alloc_mode = ALLOC_MODE_UNSET;
+	F2FS_OPTION(sbi).compress_algorithm = COMPRESS_UNSET;
+	F2FS_OPTION(sbi).compress_log_size = UNSET_COMPRESS_LOG_SIZE;
+	F2FS_OPTION(sbi).compress_mode = COMPR_MODE_UNSET;
+	F2FS_OPTION(sbi).fs_mode = FS_MODE_UNSET;
+	F2FS_OPTION(sbi).active_logs = NR_CURSEG_UNSET_TYPE;
 }
 
 #ifdef CONFIG_QUOTA
@@ -2372,7 +2413,9 @@ static int f2fs_remount(struct super_block *sb, int *flags, char *data)
 	}
 #endif
 
-	err = f2fs_default_check(sbi);
+	f2fs_sb_defaults(sbi, true);
+
+	err = f2fs_default_check(sbi, true);
 	if (err)
 		goto restore_opts;
 
@@ -4474,7 +4517,10 @@ try_onemore:
 	if (err)
 		goto free_options;
 
-	err = f2fs_default_check(sbi);
+	/* Set up defaults from superblock for unspecified options */
+	f2fs_sb_defaults(sbi, false);
+
+	err = f2fs_default_check(sbi, false);
 	if (err)
 		goto free_options;
 
