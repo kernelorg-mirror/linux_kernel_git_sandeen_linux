@@ -194,7 +194,8 @@ struct f2fs_mount_info {
 	unsigned char noextensions[COMPRESS_EXT_NUM][F2FS_EXTENSION_LEN]; /* extensions */
 	/*
 	 * track certain mount flags which must be checked after sb read,
-	 * so that defaults can be set if not explicitly requested at mount.
+	 * so that defaults can be set if not explicitly requested at mount,
+	 * or options removed if format does not support it.
 	 */
 	bool user_set_discard;		/* flag */
 	bool user_set_flush_merge;	/* flag */
