@@ -731,17 +731,9 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 			set_opt(sbi, NORECOVERY);
 			break;
 		case Opt_discard:
-			if (!f2fs_hw_support_discard(sbi)) {
-				f2fs_warn(sbi, "device does not support discard");
-				break;
-			}
 			set_opt(sbi, DISCARD);
 			break;
 		case Opt_nodiscard:
-			if (f2fs_hw_should_discard(sbi)) {
-				f2fs_warn(sbi, "discard is required for zoned block devices");
-				return -EINVAL;
-			}
 			clear_opt(sbi, DISCARD);
 			break;
 		case Opt_noheap:
@@ -1404,6 +1396,14 @@ static int f2fs_default_check(struct f2fs_sb_info *sbi)
 
 	if (test_opt(sbi, NORECOVERY) && !f2fs_readonly(sbi->sb)) {
 		f2fs_err(sbi, "norecovery requires readonly mount");
+		return -EINVAL;
+	}
+
+	if (test_opt(sbi, DISCARD) && !f2fs_hw_support_discard(sbi))
+		f2fs_warn(sbi, "device does not support discard");
+
+	if (!test_opt(sbi, DISCARD) && f2fs_hw_should_discard(sbi)) {
+		f2fs_warn(sbi, "discard is required for zoned block devices");
 		return -EINVAL;
 	}
 
