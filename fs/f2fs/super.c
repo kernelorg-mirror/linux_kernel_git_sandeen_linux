@@ -3,7 +3,7 @@
  * fs/f2fs/super.c
  *
  * Copyright (c) 2012 Samsung Electronics Co., Ltd.
- *             http://www.samsung.com/
+ *	     http://www.samsung.com/
  */
 #include <linux/module.h>
 #include <linux/init.h>
@@ -600,6 +600,55 @@ static int f2fs_test_compress_extension(struct f2fs_sb_info *sbi)
 	return 0;
 }
 
+static bool f2fs_any_compression_set(struct f2fs_sb_info *sbi)
+{
+	if ((F2FS_OPTION(sbi).compress_algorithm != COMPRESS_UNSET) ||
+	    F2FS_OPTION(sbi).compress_log_size ||
+	    F2FS_OPTION(sbi).compress_ext_cnt  ||
+	    F2FS_OPTION(sbi).nocompress_ext_cnt ||
+	    F2FS_OPTION(sbi).compress_chksum ||
+	    F2FS_OPTION(sbi).compress_mode ||
+	    test_opt(sbi, COMPRESS_CACHE))
+		return true;
+	else
+		return false;
+}
+
+static void f2fs_clear_compression_opts(struct f2fs_sb_info *sbi)
+{
+	int i;
+
+	F2FS_OPTION(sbi).compress_algorithm = COMPRESS_UNSET;
+	F2FS_OPTION(sbi).compress_log_size = 0;
+	F2FS_OPTION(sbi).compress_chksum = false;
+	F2FS_OPTION(sbi).compress_mode = 0;
+	clear_opt(sbi, COMPRESS_CACHE);
+
+	for (i = 0; i < F2FS_OPTION(sbi).compress_ext_cnt; i++)
+		F2FS_OPTION(sbi).extensions[i][0] = '\0';
+	F2FS_OPTION(sbi).compress_ext_cnt = 0;
+
+	for (i = 0; i < F2FS_OPTION(sbi).nocompress_ext_cnt; i++)
+		F2FS_OPTION(sbi).noextensions[i][0] = '\0';
+	F2FS_OPTION(sbi).nocompress_ext_cnt = 0;
+}
+
+static int f2fs_check_compression_options(struct f2fs_sb_info *sbi)
+{
+	if (!f2fs_sb_has_compression(sbi) && f2fs_any_compression_set(sbi)) {
+		f2fs_info(sbi, "Image doesn't support compression");
+		f2fs_clear_compression_opts(sbi);
+		return 0;
+	}
+
+	if (f2fs_test_compress_extension(sbi)) {
+		f2fs_err(sbi, "invalid compress or nocompress extension");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 #ifdef CONFIG_F2FS_FS_LZ4
 static int f2fs_set_lz4hc_level(struct f2fs_sb_info *sbi, const char *str)
 {
@@ -1058,10 +1107,6 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 			break;
 #ifdef CONFIG_F2FS_FS_COMPRESSION
 		case Opt_compress_algorithm:
-			if (!f2fs_sb_has_compression(sbi)) {
-				f2fs_info(sbi, "Image doesn't support compression");
-				break;
-			}
 			name = match_strdup(&args[0]);
 			if (!name)
 				return -ENOMEM;
@@ -1112,10 +1157,6 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 			kfree(name);
 			break;
 		case Opt_compress_log_size:
-			if (!f2fs_sb_has_compression(sbi)) {
-				f2fs_info(sbi, "Image doesn't support compression");
-				break;
-			}
 			if (args->from && match_int(args, &arg))
 				return -EINVAL;
 			if (arg < MIN_COMPRESS_LOG_SIZE ||
@@ -1127,10 +1168,6 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 			F2FS_OPTION(sbi).compress_log_size = arg;
 			break;
 		case Opt_compress_extension:
-			if (!f2fs_sb_has_compression(sbi)) {
-				f2fs_info(sbi, "Image doesn't support compression");
-				break;
-			}
 			name = match_strdup(&args[0]);
 			if (!name)
 				return -ENOMEM;
@@ -1156,10 +1193,6 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 			kfree(name);
 			break;
 		case Opt_nocompress_extension:
-			if (!f2fs_sb_has_compression(sbi)) {
-				f2fs_info(sbi, "Image doesn't support compression");
-				break;
-			}
 			name = match_strdup(&args[0]);
 			if (!name)
 				return -ENOMEM;
@@ -1185,17 +1218,9 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 			kfree(name);
 			break;
 		case Opt_compress_chksum:
-			if (!f2fs_sb_has_compression(sbi)) {
-				f2fs_info(sbi, "Image doesn't support compression");
-				break;
-			}
 			F2FS_OPTION(sbi).compress_chksum = true;
 			break;
 		case Opt_compress_mode:
-			if (!f2fs_sb_has_compression(sbi)) {
-				f2fs_info(sbi, "Image doesn't support compression");
-				break;
-			}
 			name = match_strdup(&args[0]);
 			if (!name)
 				return -ENOMEM;
@@ -1210,10 +1235,6 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 			kfree(name);
 			break;
 		case Opt_compress_cache:
-			if (!f2fs_sb_has_compression(sbi)) {
-				f2fs_info(sbi, "Image doesn't support compression");
-				break;
-			}
 			set_opt(sbi, COMPRESS_CACHE);
 			break;
 #else
@@ -1349,10 +1370,8 @@ static int f2fs_default_check(struct f2fs_sb_info *sbi)
 	}
 
 #ifdef CONFIG_F2FS_FS_COMPRESSION
-	if (f2fs_test_compress_extension(sbi)) {
-		f2fs_err(sbi, "invalid compress or nocompress extension");
+	if (f2fs_check_compression_options(sbi))
 		return -EINVAL;
-	}
 #endif
 
 	if (test_opt(sbi, INLINE_XATTR_SIZE)) {

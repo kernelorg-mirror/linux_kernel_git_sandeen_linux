@@ -1434,6 +1434,7 @@ enum compress_algorithm_type {
 	COMPRESS_ZSTD,
 	COMPRESS_LZORLE,
 	COMPRESS_MAX,
+	COMPRESS_UNSET,
 };
 
 enum compress_flag {
