@@ -63,22 +63,6 @@ __setup("devtmpfs.mount=", mount_param);
 
 static struct vfsmount *mnt;
 
-static struct dentry *public_dev_mount(struct file_system_type *fs_type, int flags,
-		      const char *dev_name, void *data)
-{
-	struct super_block *s = mnt->mnt_sb;
-	int err;
-
-	atomic_inc(&s->s_active);
-	down_write(&s->s_umount);
-	err = reconfigure_single(s, flags, data);
-	if (err < 0) {
-		deactivate_locked_super(s);
-		return ERR_PTR(err);
-	}
-	return dget(s->s_root);
-}
-
 static struct file_system_type internal_fs_type = {
 	.name = "devtmpfs",
 #ifdef CONFIG_TMPFS
@@ -89,9 +73,42 @@ static struct file_system_type internal_fs_type = {
 	.kill_sb = kill_litter_super,
 };
 
+/* Just take ref on existing mount */
+static int devtmpfs_get_tree(struct fs_context *fc)
+{
+	struct super_block *sb = mnt->mnt_sb;
+
+	atomic_inc(&sb->s_active);
+	down_write(&sb->s_umount);
+	fc->root = dget(sb->s_root);
+	return 0;
+}
+
+/* Used to clone underlying context ops */
+struct fs_context_operations devtmpfs_context_ops = {};
+
+static int devtmpfs_init_fs_context(struct fs_context *fc)
+{
+	int ret;
+#ifdef CONFIG_TMPFS
+	ret = shmem_init_fs_context(fc);
+#else
+	ret = ramfs_init_fs_context(fc);
+#endif
+	if (ret < 0)
+		return ret;
+
+	/* structure copy underlying ops */
+	devtmpfs_context_ops = *fc->ops;
+	devtmpfs_context_ops.get_tree = devtmpfs_get_tree;
+	fc->ops = &devtmpfs_context_ops;
+
+	return 0;
+}
+
 static struct file_system_type dev_fs_type = {
 	.name = "devtmpfs",
-	.mount = public_dev_mount,
+	.init_fs_context = devtmpfs_init_fs_context,
 };
 
 static int devtmpfs_submit_req(struct req *req, const char *tmp)
