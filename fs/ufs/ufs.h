@@ -70,9 +70,9 @@ struct ufs_inode_info {
 #define UFS_MOUNT_UFSTYPE_UFS2		0x00001000
 #define UFS_MOUNT_UFSTYPE_SUNOS		0x00002000
 
-#define ufs_clear_opt(o,opt)	o &= ~UFS_MOUNT_##opt
-#define ufs_set_opt(o,opt)	o |= UFS_MOUNT_##opt
-#define ufs_test_opt(o,opt)	((o) & UFS_MOUNT_##opt)
+#define ufs_clear_opt(o, opt)	(o &= ~(opt))
+#define ufs_set_opt(o, opt)	(o |= (opt))
+#define ufs_test_opt(o, opt)	((o) & opt)
 
 /*
  * Debug code
