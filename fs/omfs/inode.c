@@ -9,7 +9,8 @@
 #include <linux/fs.h>
 #include <linux/vfs.h>
 #include <linux/cred.h>
-#include <linux/parser.h>
+#include <linux/fs_parser.h>
+#include <linux/fs_context.h>
 #include <linux/buffer_head.h>
 #include <linux/vmalloc.h>
 #include <linux/writeback.h>
@@ -385,76 +386,70 @@ nomem:
 }
 
 enum {
-	Opt_uid, Opt_gid, Opt_umask, Opt_dmask, Opt_fmask, Opt_err
+	Opt_uid, Opt_gid, Opt_umask, Opt_dmask, Opt_fmask,
 };
 
-static const match_table_t tokens = {
-	{Opt_uid, "uid=%u"},
-	{Opt_gid, "gid=%u"},
-	{Opt_umask, "umask=%o"},
-	{Opt_dmask, "dmask=%o"},
-	{Opt_fmask, "fmask=%o"},
-	{Opt_err, NULL},
+struct omfs_context {
+	kuid_t s_uid;
+	kgid_t s_gid;
+	int s_dmask;
+	int s_fmask;
 };
 
-static int parse_options(char *options, struct omfs_sb_info *sbi)
+static const struct fs_parameter_spec omfs_param_spec[] = {
+	fsparam_uid	("uid",		Opt_uid),
+	fsparam_gid	("gid",		Opt_gid),
+	fsparam_u32oct	("umask",	Opt_umask),
+	fsparam_u32oct	("dmask",	Opt_dmask),
+	fsparam_u32oct	("fmask",	Opt_fmask),
+	{}
+};
+
+static int omfs_parse_param(struct fs_context *fc, struct fs_parameter *param)
 {
-	char *p;
-	substring_t args[MAX_OPT_ARGS];
-	int option;
+	struct fs_parse_result result;
+	struct omfs_context *ctx = fc->fs_private;
+	int opt;
 
-	if (!options)
-		return 1;
+	/* All options are ignored on remount */
+	if (fc->purpose == FS_CONTEXT_FOR_RECONFIGURE)
+		return 0;
 
-	while ((p = strsep(&options, ",")) != NULL) {
-		int token;
-		if (!*p)
-			continue;
+	opt = fs_parse(fc, omfs_param_spec, param, &result);
+	if (opt < 0)
+		return opt;
 
-		token = match_token(p, tokens, args);
-		switch (token) {
-		case Opt_uid:
-			if (match_int(&args[0], &option))
-				return 0;
-			sbi->s_uid = make_kuid(current_user_ns(), option);
-			if (!uid_valid(sbi->s_uid))
-				return 0;
-			break;
-		case Opt_gid:
-			if (match_int(&args[0], &option))
-				return 0;
-			sbi->s_gid = make_kgid(current_user_ns(), option);
-			if (!gid_valid(sbi->s_gid))
-				return 0;
-			break;
-		case Opt_umask:
-			if (match_octal(&args[0], &option))
-				return 0;
-			sbi->s_fmask = sbi->s_dmask = option;
-			break;
-		case Opt_dmask:
-			if (match_octal(&args[0], &option))
-				return 0;
-			sbi->s_dmask = option;
-			break;
-		case Opt_fmask:
-			if (match_octal(&args[0], &option))
-				return 0;
-			sbi->s_fmask = option;
-			break;
-		default:
-			return 0;
-		}
+	switch (opt) {
+	case Opt_uid:
+		ctx->s_uid = result.uid;
+		break;
+	case Opt_gid:
+		ctx->s_gid = result.gid;
+		break;
+	case Opt_umask:
+		ctx->s_fmask = ctx->s_dmask = result.uint_32;
+		break;
+	case Opt_dmask:
+		ctx->s_dmask = result.uint_32;
+		break;
+	case Opt_fmask:
+		ctx->s_fmask = result.uint_32;
+		break;
+	default:
+		return -EINVAL;
 	}
-	return 1;
+
+	return 0;
 }
 
-static int omfs_fill_super(struct super_block *sb, void *data, int silent)
+static int omfs_fill_super(struct super_block *sb, struct fs_context *fc)
 {
 	struct buffer_head *bh, *bh2;
 	struct omfs_super_block *omfs_sb;
 	struct omfs_root_block *omfs_rb;
 	struct omfs_sb_info *sbi;
+	struct omfs_context *ctx = fc->fs_private;
+	int silent = fc->sb_flags & SB_SILENT;
 	struct inode *root;
 	int ret = -EINVAL;
 
@@ -462,14 +457,12 @@ static int omfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (!sbi)
 		return -ENOMEM;
 
+	sbi->s_uid = ctx->s_uid;
+	sbi->s_gid = ctx->s_gid;
+	sbi->s_dmask = ctx->s_dmask;
+	sbi->s_fmask = ctx->s_fmask;
+
 	sb->s_fs_info = sbi;
-
-	sbi->s_uid = current_uid();
-	sbi->s_gid = current_gid();
-	sbi->s_dmask = sbi->s_fmask = current_umask();
-
-	if (!parse_options((char *) data, sbi))
-		goto end;
 
 	sb->s_maxbytes = 0xffffffff;
 
@@ -594,18 +587,47 @@ end:
 	return ret;
 }
 
-static struct dentry *omfs_mount(struct file_system_type *fs_type,
-			int flags, const char *dev_name, void *data)
+static int omfs_get_tree(struct fs_context *fc)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, omfs_fill_super);
+	return get_tree_bdev(fc, omfs_fill_super);
+}
+
+static void omfs_free_fc(struct fs_context *fc)
+{
+	kfree(fc->fs_private);
+}
+
+static const struct fs_context_operations omfs_context_ops = {
+	.parse_param	= omfs_parse_param,
+	.get_tree	= omfs_get_tree,
+	.free		= omfs_free_fc,
+};
+
+static int omfs_init_fs_context(struct fs_context *fc)
+{
+	struct omfs_context *ctx;
+
+	ctx = kzalloc(sizeof(struct omfs_context), GFP_KERNEL);
+	if (!ctx)
+		return -ENOMEM;
+
+	ctx->s_uid = current_uid();
+	ctx->s_gid = current_gid();
+	ctx->s_dmask = ctx->s_fmask = current_umask();
+
+	fc->ops = &omfs_context_ops;
+	fc->fs_private = ctx;
+
+	return 0;
 }
 
 static struct file_system_type omfs_fs_type = {
 	.owner = THIS_MODULE,
 	.name = "omfs",
-	.mount = omfs_mount,
 	.kill_sb = kill_block_super,
 	.fs_flags = FS_REQUIRES_DEV,
+	.init_fs_context = omfs_init_fs_context,
+	.parameters = omfs_param_spec,
 };
 MODULE_ALIAS_FS("omfs");
 
