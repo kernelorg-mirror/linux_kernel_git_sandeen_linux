@@ -115,6 +115,11 @@ extern const char *f2fs_fault_name[FAULT_MAX];
 #define F2FS_MOUNT_COMPRESS_CACHE	0x04000000
 #define F2FS_MOUNT_AGE_EXTENT_CACHE	0x08000000
 #define F2FS_MOUNT_INLINECRYPT		0x10000000
+/*
+ * Some f2fs environments expect to be able to pass the "lazytime" option
+ * string rather than using the MS_LAZYTIME flag, so this must remain.
+ */
+#define F2FS_MOUNT_LAZYTIME		0x20000000
 
 #define F2FS_OPTION(sbi)	((sbi)->mount_opt)
 #define clear_opt(sbi, option)	(F2FS_OPTION(sbi).opt &= ~F2FS_MOUNT_##option)
